@@ -275,6 +275,17 @@ test("switches to top-to-bottom layout and persists the complete result", async 
     await restored.evaluate(() => window.dbdefErAutoLayout.getDirection()),
     "top-to-bottom",
   );
+  assert.deepEqual(
+    await restored.evaluate(() => ({
+      leftToRight: document.querySelector(
+        '[data-er-layout-direction="left-to-right"]',
+      ).getAttribute("aria-pressed"),
+      topToBottom: document.querySelector(
+        '[data-er-layout-direction="top-to-bottom"]',
+      ).getAttribute("aria-pressed"),
+    })),
+    { leftToRight: "false", topToBottom: "true" },
+  );
   await restored.close();
 });
 
