@@ -376,9 +376,9 @@ test("continues dragging and reports quota failures when a layout cannot be save
   await page.close();
 });
 
-test("keeps the viewer available when localStorage access is blocked", async () => {
+test("reports restore when localStorage access is blocked during startup", async () => {
   const page = await openPage({
-    definitionId: "blocked-storage",
+    definitionId: "blocked-storage-restore",
     beforeLayout: `
       Object.defineProperty(window, "localStorage", {
         configurable: true,
@@ -394,14 +394,86 @@ test("keeps the viewer available when localStorage access is blocked", async () 
     layoutReady: Boolean(window.dbdefErLayout),
     status: document.querySelector("#dbdef-er-layout-status").textContent,
     failed: document.querySelector("#dbdef-er-layout-status").dataset.status,
+    action: null,
   }));
   assert.deepEqual(result, {
     nodeCount: 2,
     viewerReady: true,
     layoutReady: true,
-    status: "配置を保存できません。ブラウザの保存領域を確認してください。",
+    status: "配置を復元できません。ブラウザの保存領域を確認してください。",
     failed: "error",
+    action: null,
   });
+  await page.close();
+});
+
+async function blockStorageAccess(page) {
+  await page.evaluate(() => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new DOMException("Storage access is blocked.", "SecurityError");
+      },
+    });
+  });
+}
+
+test("reports save when localStorage access is blocked during explicit save", async () => {
+  const page = await openPage({ definitionId: "blocked-storage-save" });
+  await blockStorageAccess(page);
+  const result = await page.evaluate(() => {
+    let action = null;
+    document.querySelector("#dbdef-er-viewer").addEventListener(
+      "dbdef:er-layout-storage-error",
+      (event) => {
+        action = event.detail.action;
+      },
+      { once: true },
+    );
+    return {
+      saved: window.dbdefErLayout.save(),
+      status: document.querySelector("#dbdef-er-layout-status").textContent,
+      action,
+    };
+  });
+  assert.deepEqual(result, {
+    saved: false,
+    status: "配置を保存できません。ブラウザの保存領域を確認してください。",
+    action: "保存",
+  });
+  await page.close();
+});
+
+test("reports reset when localStorage access is blocked while resetting", async () => {
+  const page = await openPage({ definitionId: "blocked-storage-reset" });
+  const initial = await page.evaluate(() => window.dbdefErViewer.getState().nodePositions);
+  await page.evaluate(() => {
+    window.dbdefErViewer.setNodePosition("table_1", { x: 900, y: 600 });
+  });
+  await blockStorageAccess(page);
+  const result = await page.evaluate(() => {
+    let action = null;
+    document.querySelector("#dbdef-er-viewer").addEventListener(
+      "dbdef:er-layout-storage-error",
+      (event) => {
+        action = event.detail.action;
+      },
+      { once: true },
+    );
+    return {
+      reset: window.dbdefErLayout.reset(),
+      positions: window.dbdefErViewer.getState().nodePositions,
+      status: document.querySelector("#dbdef-er-layout-status").textContent,
+      action,
+    };
+  });
+  assert.equal(result.reset, false);
+  assert.deepEqual(result.positions, initial);
+  assert.equal(
+    result.status,
+    "配置をリセットできません。ブラウザの保存領域を確認してください。",
+  );
+  assert.equal(result.action, "リセット");
   await page.close();
 });
 

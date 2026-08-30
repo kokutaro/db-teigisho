@@ -92,12 +92,12 @@
     }));
   }
 
-  function getStorage() {
+  function getStorage(action) {
     try {
       return window.localStorage;
     } catch (error) {
       if (isExpectedStorageError(error)) {
-        reportStorageError("保存", error);
+        reportStorageError(action, error);
         return null;
       }
       throw error;
@@ -226,7 +226,7 @@
   }
 
   function restore() {
-    const storage = getStorage();
+    const storage = getStorage("復元");
     if (storage === null) {
       return false;
     }
@@ -247,7 +247,7 @@
   }
 
   function save() {
-    const storage = getStorage();
+    const storage = getStorage("保存");
     if (storage === null) {
       return false;
     }
@@ -276,8 +276,8 @@
     return true;
   }
 
-  function removeSavedLayouts() {
-    const storage = getStorage();
+  function removeSavedLayouts(action = "削除") {
+    const storage = getStorage(action);
     if (storage === null) {
       return false;
     }
@@ -293,7 +293,7 @@
       return true;
     } catch (error) {
       if (isExpectedStorageError(error)) {
-        reportStorageError("削除", error);
+        reportStorageError(action, error);
         return false;
       }
       throw error;
@@ -303,7 +303,7 @@
   function reset() {
     viewer.setNodePositions(initialPositions, { source: "reset" });
     viewer.fitToView();
-    if (removeSavedLayouts()) {
+    if (removeSavedLayouts("リセット")) {
       setStatus("保存済み配置を破棄し、初期配置に戻しました。");
       return true;
     }
