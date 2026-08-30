@@ -380,6 +380,14 @@ test("reports restore when localStorage access is blocked during startup", async
   const page = await openPage({
     definitionId: "blocked-storage-restore",
     beforeLayout: `
+      window.blockedRestoreAction = null;
+      document.querySelector("#dbdef-er-viewer").addEventListener(
+        "dbdef:er-layout-storage-error",
+        (event) => {
+          window.blockedRestoreAction = event.detail.action;
+        },
+        { once: true },
+      );
       Object.defineProperty(window, "localStorage", {
         configurable: true,
         get() {
@@ -394,7 +402,7 @@ test("reports restore when localStorage access is blocked during startup", async
     layoutReady: Boolean(window.dbdefErLayout),
     status: document.querySelector("#dbdef-er-layout-status").textContent,
     failed: document.querySelector("#dbdef-er-layout-status").dataset.status,
-    action: null,
+    action: window.blockedRestoreAction,
   }));
   assert.deepEqual(result, {
     nodeCount: 2,
@@ -402,7 +410,7 @@ test("reports restore when localStorage access is blocked during startup", async
     layoutReady: true,
     status: "配置を復元できません。ブラウザの保存領域を確認してください。",
     failed: "error",
-    action: null,
+    action: "復元",
   });
   await page.close();
 });
