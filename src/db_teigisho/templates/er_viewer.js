@@ -11,6 +11,7 @@
   const NODE_GAP_X = 100;
   const NODE_GAP_Y = 80;
   const FIT_PADDING = 36;
+  const FIT_ROUTED_CONTENT_PADDING = 12;
   const MODES = new Set(["all", "keys", "tables"]);
 
   const section = document.querySelector("#er-diagram");
@@ -83,15 +84,19 @@
     return positions;
   }
 
-  function visibleColumns(table) {
-    if (state.mode === "tables") {
+  function columnsForMode(table, mode) {
+    if (mode === "tables") {
       return [];
     }
-    if (state.mode === "keys") {
+    if (mode === "keys") {
       return table.columns.filter((column) => column.key_roles.includes("PK") ||
         column.key_roles.includes("FK"));
     }
     return table.columns;
+  }
+
+  function visibleColumns(table) {
+    return columnsForMode(table, state.mode);
   }
 
   function appendText(parent, text, attributes) {
@@ -377,10 +382,26 @@
       return { x: 0, y: 0, width: 1, height: 1 };
     }
     const geometries = graph.tables.map((table) => nodeGeometry(table.id));
-    const minX = Math.min(...geometries.map((item) => item.x));
-    const minY = Math.min(...geometries.map((item) => item.y));
-    const maxX = Math.max(...geometries.map((item) => item.x + item.width));
-    const maxY = Math.max(...geometries.map((item) => item.y + item.height));
+    let minX = Math.min(...geometries.map((item) => item.x));
+    let minY = Math.min(...geometries.map((item) => item.y));
+    let maxX = Math.max(...geometries.map((item) => item.x + item.width));
+    let maxY = Math.max(...geometries.map((item) => item.y + item.height));
+    if (edgesLayer.childElementCount > 0) {
+      const routedBounds = edgesLayer.getBBox();
+      if ([routedBounds.x, routedBounds.y, routedBounds.width, routedBounds.height]
+        .every(Number.isFinite)) {
+        minX = Math.min(minX, routedBounds.x - FIT_ROUTED_CONTENT_PADDING);
+        minY = Math.min(minY, routedBounds.y - FIT_ROUTED_CONTENT_PADDING);
+        maxX = Math.max(
+          maxX,
+          routedBounds.x + routedBounds.width + FIT_ROUTED_CONTENT_PADDING,
+        );
+        maxY = Math.max(
+          maxY,
+          routedBounds.y + routedBounds.height + FIT_ROUTED_CONTENT_PADDING,
+        );
+      }
+    }
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
 
@@ -420,6 +441,20 @@
       throw new Error(`Unknown ER table node: ${tableId}`);
     }
     return { ...position };
+  }
+
+  function getNodeSize(tableId, mode = "all") {
+    const table = tableById.get(tableId);
+    if (!table) {
+      throw new Error(`Unknown ER table node: ${tableId}`);
+    }
+    if (!MODES.has(mode)) {
+      throw new TypeError(`Unknown ER column display mode: ${mode}`);
+    }
+    return {
+      width: NODE_WIDTH,
+      height: HEADER_HEIGHT + columnsForMode(table, mode).length * ROW_HEIGHT,
+    };
   }
 
   function normalizePosition(tableId, position) {
@@ -559,6 +594,7 @@
     zoomIn: () => zoomFromCenter(ZOOM_FACTOR, "api"),
     zoomOut: () => zoomFromCenter(1 / ZOOM_FACTOR, "api"),
     getNodePosition,
+    getNodeSize,
     setNodePosition,
     setNodePositions,
     redrawEdges,
