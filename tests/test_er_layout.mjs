@@ -16,6 +16,22 @@ const layoutStyles = await readFile(
   new URL("../src/db_teigisho/templates/er_layout.css", import.meta.url),
   "utf8",
 );
+const detailsScript = await readFile(
+  new URL("../src/db_teigisho/templates/er_details.js", import.meta.url),
+  "utf8",
+);
+const detailsStyles = await readFile(
+  new URL("../src/db_teigisho/templates/er_details.css", import.meta.url),
+  "utf8",
+);
+const routingScript = await readFile(
+  new URL("../src/db_teigisho/templates/er_edge_routing.js", import.meta.url),
+  "utf8",
+);
+const routingStyles = await readFile(
+  new URL("../src/db_teigisho/templates/er_edge_routing.css", import.meta.url),
+  "utf8",
+);
 
 const baseGraph = {
   format_version: "1.0",
@@ -83,7 +99,29 @@ const baseGraph = {
   ],
 };
 
-function pageHtml({ graph = baseGraph, definitionId, beforeLayout = "" }) {
+function pageHtml({
+  graph = baseGraph,
+  definitionId,
+  beforeLayout = "",
+  withDetails = false,
+  withRouting = false,
+}) {
+  const detailPanel = withDetails
+    ? `<aside id="dbdef-er-details" class="er-detail-panel" aria-live="polite"
+        aria-labelledby="dbdef-er-details-title" hidden>
+        <button id="dbdef-er-details-close" type="button">Close</button>
+        <p id="dbdef-er-details-kind"></p>
+        <h3 id="dbdef-er-details-title"></h3>
+        <div id="dbdef-er-details-body"></div>
+      </aside>`
+    : "";
+  const detailScript = withDetails ? `<script>${detailsScript}</script>` : "";
+  const routingControls = withRouting
+    ? `<button type="button" data-er-edge-routing="straight" aria-pressed="true">Straight</button>
+       <button type="button" data-er-edge-routing="orthogonal" aria-pressed="false">Orthogonal</button>
+       <output id="dbdef-er-edge-routing-status" aria-live="polite"></output>`
+    : "";
+  const routingModule = withRouting ? `<script>${routingScript}</script>` : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -93,6 +131,8 @@ function pageHtml({ graph = baseGraph, definitionId, beforeLayout = "" }) {
     .er-viewer { width: 100%; height: 100%; user-select: none; }
     .er-canvas { width: 100%; height: 100%; }
     ${layoutStyles}
+    ${withDetails ? detailsStyles : ""}
+    ${withRouting ? routingStyles : ""}
   </style>
 </head>
 <body>
@@ -101,6 +141,7 @@ function pageHtml({ graph = baseGraph, definitionId, beforeLayout = "" }) {
       <button type="button" data-er-mode="all" aria-pressed="true">All</button>
       <button type="button" data-er-mode="keys" aria-pressed="false">Keys</button>
       <button type="button" data-er-mode="tables" aria-pressed="false">Tables</button>
+      ${routingControls}
       <button type="button" data-er-action="zoom-out">Zoom out</button>
       <output id="dbdef-er-zoom-level">100%</output>
       <button type="button" data-er-action="zoom-in">Zoom in</button>
@@ -110,10 +151,13 @@ function pageHtml({ graph = baseGraph, definitionId, beforeLayout = "" }) {
     </div>
     <div class="er-diagram-frame">
       <div id="dbdef-er-viewer" class="er-viewer"></div>
+      ${detailPanel}
     </div>
   </section>
   <script id="dbdef-er-graph" type="application/json">${JSON.stringify(graph)}</script>
   <script>${viewerScript}</script>
+  ${detailScript}
+  ${routingModule}
   <script>${beforeLayout}</script>
   <script>${layoutScript}</script>
 </body>
@@ -180,6 +224,7 @@ test("drags a node, redraws its edge during movement, and restores the saved lay
     x: before.position.x + 140,
     y: before.position.y + 90,
   });
+
   assert.notEqual(during.edge, before.edge);
   assert.equal(during.dragging, true);
 
@@ -199,6 +244,133 @@ test("drags a node, redraws its edge during movement, and restores the saved lay
   assert.deepEqual(
     await restoredPage.evaluate(() => window.dbdefErViewer.getNodePosition("table_2")),
     during.position,
+  );
+  await restoredPage.close();
+});
+
+test("keeps details selection usable while dragging and restoring node layouts", async () => {
+  const definitionId = "details-and-layout";
+  const page = await openPage({ definitionId, withDetails: true, withRouting: true });
+  const originalEdge = await page.$eval(".er-edge", (edge) => edge.getAttribute("d"));
+  await page.click('[data-table-id="table_1"] .er-node-physical');
+  const afterSelection = await page.evaluate(() => ({
+    detailTitle: document.querySelector("#dbdef-er-details-title").textContent,
+    status: document.querySelector("#dbdef-er-layout-status").textContent,
+    saved: localStorage.getItem(window.dbdefErLayout.getStorageKey()),
+    tableSelected: document.querySelector(
+      '[data-table-id="table_1"] [data-er-detail-target="table"]',
+    ).getAttribute("aria-selected"),
+    controls: document.querySelector(
+      '[data-table-id="table_1"] [data-er-detail-target="table"]',
+    ).getAttribute("aria-controls"),
+    panelRole: document.querySelector("#dbdef-er-details").getAttribute("role"),
+  }));
+  assert.deepEqual(afterSelection, {
+    detailTitle: "customers / Customers",
+    status: "",
+    saved: null,
+    tableSelected: "true",
+    controls: "dbdef-er-details",
+    panelRole: "region",
+  });
+
+  await page.click('[data-column-id="table_1_column_1"] .er-column-name');
+  const afterColumnSelection = await page.evaluate(() => ({
+    detailTitle: document.querySelector("#dbdef-er-details-title").textContent,
+    saved: localStorage.getItem(window.dbdefErLayout.getStorageKey()),
+    selected: document.querySelector(
+      '[data-column-id="table_1_column_1"]',
+    ).getAttribute("aria-selected"),
+    controls: document.querySelector(
+      '[data-column-id="table_1_column_1"]',
+    ).getAttribute("aria-controls"),
+  }));
+  assert.deepEqual(afterColumnSelection, {
+    detailTitle: "customer_id / Customer ID",
+    saved: null,
+    selected: "true",
+    controls: "dbdef-er-details",
+  });
+
+  await page.click('[data-er-edge-routing="orthogonal"]');
+  const afterRouting = await page.evaluate(() => ({
+    mode: window.dbdefErEdgeRouting.getRoutingMode(),
+    edge: document.querySelector(".er-edge").getAttribute("d"),
+    routingStored: localStorage.getItem(window.dbdefErEdgeRouting.getStorageKey()),
+    layoutStored: localStorage.getItem(window.dbdefErLayout.getStorageKey()),
+    detailTitle: document.querySelector("#dbdef-er-details-title").textContent,
+    selected: document.querySelector(
+      '[data-column-id="table_1_column_1"]',
+    ).getAttribute("aria-selected"),
+  }));
+  assert.equal(afterRouting.mode, "orthogonal");
+  assert.notEqual(afterRouting.edge, originalEdge);
+  assert.equal(afterRouting.routingStored, "orthogonal");
+  assert.equal(afterRouting.layoutStored, null);
+  assert.equal(afterRouting.detailTitle, "customer_id / Customer ID");
+  assert.equal(afterRouting.selected, "true");
+
+  const before = await page.evaluate(() => window.dbdefErViewer.getNodePosition("table_2"));
+
+  await dragNode(page, "table_2", 120, 70);
+  await page.mouse.up();
+  const afterDrag = await page.evaluate(() => ({
+    position: window.dbdefErViewer.getNodePosition("table_2"),
+    panelHidden: document.querySelector("#dbdef-er-details").hidden,
+    detailTitle: document.querySelector("#dbdef-er-details-title").textContent,
+    selected: document.querySelector(
+      '[data-table-id="table_2"] [data-er-detail-target="table"]',
+    ).getAttribute("aria-selected"),
+    route: window.dbdefErEdgeRouting.getRoutingMode(),
+    edge: document.querySelector(".er-edge").getAttribute("d"),
+    saved: JSON.parse(localStorage.getItem(window.dbdefErLayout.getStorageKey()))
+      .positions.orders,
+  }));
+  assert.deepEqual(afterDrag.position, { x: before.x + 120, y: before.y + 70 });
+  assert.deepEqual(afterDrag.saved, afterDrag.position);
+  assert.equal(afterDrag.panelHidden, false);
+  assert.equal(afterDrag.detailTitle, "orders / Orders");
+  assert.equal(afterDrag.selected, "true");
+  assert.equal(afterDrag.route, "orthogonal");
+  assert.notEqual(afterDrag.edge, afterRouting.edge);
+
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  const columnSelection = await page.evaluate(() => ({
+    title: document.querySelector("#dbdef-er-details-title").textContent,
+    selected: document.querySelector(
+      '[data-column-id="table_2_column_1"]',
+    ).getAttribute("aria-selected"),
+    controls: document.querySelector(
+      '[data-column-id="table_2_column_1"]',
+    ).getAttribute("aria-controls"),
+  }));
+  assert.deepEqual(columnSelection, {
+    title: "customer_id / Customer ID",
+    selected: "true",
+    controls: "dbdef-er-details",
+  });
+  await page.close();
+
+  const restoredPage = await openPage({
+    definitionId,
+    withDetails: true,
+    withRouting: true,
+  });
+  const restored = await restoredPage.evaluate(() => ({
+    position: window.dbdefErViewer.getNodePosition("table_2"),
+    route: window.dbdefErEdgeRouting.getRoutingMode(),
+    pressed: document.querySelector(
+      '[data-er-edge-routing="orthogonal"]',
+    ).getAttribute("aria-pressed"),
+  }));
+  assert.deepEqual(restored.position, afterDrag.position);
+  assert.equal(restored.route, "orthogonal");
+  assert.equal(restored.pressed, "true");
+  await restoredPage.click('[data-table-id="table_2"] .er-node-physical');
+  assert.equal(
+    await restoredPage.$eval("#dbdef-er-details-title", (element) => element.textContent),
+    "orders / Orders",
   );
   await restoredPage.close();
 });
