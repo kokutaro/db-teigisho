@@ -24,6 +24,14 @@ const autoLayoutStyles = await readFile(
   new URL("../src/db_teigisho/templates/er_auto_layout.css", import.meta.url),
   "utf8",
 ).catch(() => "");
+const detailsScript = await readFile(
+  new URL("../src/db_teigisho/templates/er_details.js", import.meta.url),
+  "utf8",
+);
+const detailsStyles = await readFile(
+  new URL("../src/db_teigisho/templates/er_details.css", import.meta.url),
+  "utf8",
+);
 
 function table(id, columnCount = 1) {
   return {
@@ -42,7 +50,11 @@ function table(id, columnCount = 1) {
       not_null: true,
       description: null,
       key_roles: index === 0 ? ["PK"] : [],
+      unique: index === 0,
+      primary_key: index === 0,
     })),
+    indexes: [],
+    foreign_keys: [],
   };
 }
 
@@ -97,6 +109,7 @@ function pageHtml({ graph = complexGraph, definitionId }) {
     .er-viewer, .er-canvas { width: 100%; height: 100%; }
     ${layoutStyles}
     ${autoLayoutStyles}
+    ${detailsStyles}
   </style>
 </head>
 <body>
@@ -119,10 +132,18 @@ function pageHtml({ graph = complexGraph, definitionId }) {
     </div>
     <div class="er-diagram-frame">
       <div id="dbdef-er-viewer" class="er-viewer"></div>
+      <aside id="dbdef-er-details" class="er-detail-panel" aria-live="polite"
+        aria-labelledby="dbdef-er-details-title" hidden>
+        <button id="dbdef-er-details-close" type="button">Close</button>
+        <p id="dbdef-er-details-kind"></p>
+        <h3 id="dbdef-er-details-title"></h3>
+        <div id="dbdef-er-details-body"></div>
+      </aside>
     </div>
   </section>
   <script id="dbdef-er-graph" type="application/json">${JSON.stringify(graph)}</script>
   <script>${viewerScript}</script>
+  <script>${detailsScript}</script>
   <script>${layoutScript}</script>
   <script>${autoLayoutScript}</script>
 </body>
@@ -327,4 +348,103 @@ test("rejects an unknown direction without changing positions", async () => {
   assert.equal(result.direction, "left-to-right");
   assert.match(result.error, /Unknown ER auto-layout direction/);
   await page.close();
+});
+
+test("coexists with detail selection, ARIA, dragging, and saved restoration", async () => {
+  const definitionId = "details-drag-integration";
+  const page = await openPage({ definitionId });
+
+  await page.click('[data-table-id="accounts"] .er-node-physical');
+  let details = await page.evaluate(() => {
+    const target = document.querySelector(
+      '[data-table-id="accounts"] [data-er-detail-target="table"]',
+    );
+    return {
+      hidden: document.querySelector("#dbdef-er-details").hidden,
+      title: document.querySelector("#dbdef-er-details-title").textContent,
+      role: target.getAttribute("role"),
+      selected: target.getAttribute("aria-selected"),
+      controls: target.getAttribute("aria-controls"),
+      panelRole: document.querySelector("#dbdef-er-details").getAttribute("role"),
+    };
+  });
+  assert.deepEqual(details, {
+    hidden: false,
+    title: "accounts / accounts",
+    role: "option",
+    selected: "true",
+    controls: "dbdef-er-details",
+    panelRole: "region",
+  });
+
+  await page.click('[data-er-layout-direction="top-to-bottom"]');
+  assert.equal(
+    await page.$eval(
+      '[data-table-id="accounts"] [data-er-detail-target="table"]',
+      (target) => target.getAttribute("aria-selected"),
+    ),
+    "true",
+  );
+  await page.click('[data-column-id="orders_column_0"] .er-column-name');
+  details = await page.evaluate(() => {
+    const target = document.querySelector('[data-column-id="orders_column_0"]');
+    return {
+      kind: document.querySelector("#dbdef-er-details-kind").textContent,
+      title: document.querySelector("#dbdef-er-details-title").textContent,
+      selected: target.getAttribute("aria-selected"),
+      controls: target.getAttribute("aria-controls"),
+    };
+  });
+  assert.deepEqual(details, {
+    kind: "カラム詳細",
+    title: "column_0 / column_0",
+    selected: "true",
+    controls: "dbdef-er-details",
+  });
+
+  await page.evaluate(() => window.dbdefErViewer.setViewport({ scale: 1, x: 30, y: 30 }));
+  const before = await page.evaluate(() => window.dbdefErViewer.getNodePosition("orders"));
+  const node = await page.$('[data-table-id="orders"]');
+  const box = await node.boundingBox();
+  await page.mouse.move(box.x + 40, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 130, box.y + 85, { steps: 4 });
+  await page.mouse.up();
+  const dragged = await page.evaluate(() => window.dbdefErViewer.getNodePosition("orders"));
+  assert.deepEqual(dragged, { x: before.x + 90, y: before.y + 65 });
+  const saved = await page.evaluate(() => {
+    const record = JSON.parse(localStorage.getItem(window.dbdefErLayout.getStorageKey()));
+    return {
+      position: record.positions.orders,
+      direction: record.metadata.autoLayoutDirection,
+      tableSelected: document.querySelector(
+        '[data-table-id="orders"] [data-er-detail-target="table"]',
+      ).getAttribute("aria-selected"),
+    };
+  });
+  assert.deepEqual(saved, {
+    position: dragged,
+    direction: "top-to-bottom",
+    tableSelected: "true",
+  });
+  await page.close();
+
+  const restored = await openPage({ definitionId });
+  assert.deepEqual(
+    await restored.evaluate(() => window.dbdefErViewer.getNodePosition("orders")),
+    dragged,
+  );
+  assert.equal(
+    await restored.evaluate(() => window.dbdefErAutoLayout.getDirection()),
+    "top-to-bottom",
+  );
+  await restored.click('[data-column-id="orders_column_0"] .er-column-name');
+  assert.equal(
+    await restored.$eval(
+      '[data-column-id="orders_column_0"]',
+      (target) => target.getAttribute("aria-selected"),
+    ),
+    "true",
+  );
+  await restored.close();
 });

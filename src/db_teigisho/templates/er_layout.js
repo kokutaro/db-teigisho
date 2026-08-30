@@ -351,6 +351,7 @@
       node,
       offsetX: pointer.x - position.x,
       offsetY: pointer.y - position.y,
+      moved: false,
     };
     node.setPointerCapture(event.pointerId);
     node.classList.add("er-is-dragging");
@@ -363,10 +364,15 @@
       return;
     }
     const pointer = viewer.screenToGraphPoint(event.clientX, event.clientY);
-    viewer.setNodePosition(dragState.tableId, {
+    const nextPosition = {
       x: pointer.x - dragState.offsetX,
       y: pointer.y - dragState.offsetY,
-    }, { source: "drag" });
+    };
+    const currentPosition = viewer.getNodePosition(dragState.tableId);
+    if (nextPosition.x !== currentPosition.x || nextPosition.y !== currentPosition.y) {
+      dragState.moved = true;
+      viewer.setNodePosition(dragState.tableId, nextPosition, { source: "drag" });
+    }
     event.preventDefault();
     event.stopPropagation();
   }
@@ -375,14 +381,14 @@
     if (!dragState || event.pointerId !== dragState.pointerId) {
       return;
     }
-    const { node, pointerId } = dragState;
+    const { node, pointerId, moved } = dragState;
     dragState = null;
     node.classList.remove("er-is-dragging");
     if (node.hasPointerCapture(pointerId)) {
       node.releasePointerCapture(pointerId);
     }
     event.stopPropagation();
-    if (event.type === "pointerup") {
+    if (event.type === "pointerup" && moved) {
       save();
     }
   }
